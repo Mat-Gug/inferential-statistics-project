@@ -24,7 +24,7 @@ We use the dataset present in the `newborns.csv` file. It contains data on 2500 
 - `Hospital`: hospital, 1, 2 or 3;
 - `Sex`: baby's sex, Male or Female.
 
-You can see the HTML output of the R Markdown document by clicking on the link in the "About" section! 
+You can see the HTML output of the R Markdown document by clicking on the link in the "About" section! :link:
 
 
 
