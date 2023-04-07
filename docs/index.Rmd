@@ -1,0 +1,715 @@
+---
+title: "Inferential Statistics Project: what will your baby's weight be?"
+author: "Mattia Guglielmelli"
+date: "2023-03-31"
+output: 
+  prettydoc::html_pretty:
+    theme: hpstr
+    highlight: github
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+Let us start by importing the dataset and the libraries we are going to use:
+
+```{r}
+library(moments)
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(GGally)
+library(car)
+library(lmtest)
+library(scatterplot3d)
+
+data <- read.csv("newborns.csv", stringsAsFactors = T)
+data$Smoker <- as.factor(data$Smoker)
+head(data,10)
+```
+
+It contains data on 2500 newborns collected from 3 different hospitals. There are 10 variables for each observable:
+
+- `Mother.age`: the mother's age (discrete quantitative variable);
+- `Pregnancies.number`: the number of pregnancies the mother has already gone through (discrete quantitative variable); 
+- `Smoker`: it is 0 if the mother does not smoke, otherwise it is 1 (qualitative nominal variable); 
+- `Gestation.weeks`: number of gestation's weeks (discrete quantitative variable);
+- `Weight`: baby's weight, in g (continuous quantitative variable);
+- `Length`: baby's length, in mm (continuous quantitative variable); 
+- `Cranium`: diameter of the baby's cranium, in mm (continuous quantitative variable);
+- `Birth.type`: birth type, Natural or Cesarean (qualitative nominal variable);
+- `Hospital`: hospital, 1, 2 or 3 (qualitative nominal variable);
+- `Sex`: baby's sex, Male or Female (qualitative nominal variable).
+
+The project aims at predicting the baby's weight, given all the other variables. Therefore, we will study how the variables influence the weight and see which of them play a relevant role in its determination. To achieve this objective, we use **multiple linear regression**.
+
+First of all, let us quickly summarize every column in the dataset by means of the `summary()` function:
+
+```{r}
+summary(data)
+```
+
+We see that the minimum value of the variable `Mother.age` is 0, so let us check:
+
+```{r}
+filter(data,Mother.age<10)
+```
+
+These values are impossible for a mother's age. However, the rest of the information contained in the rows with `Mother.age` equal to 0 or 1 seems plausible. Therefore, we choose to keep them, by modifying the value of `Mother.age`. To do this, we perform the **Kolmogorov-Smirnov test** between the sample obtained by removing the abnormal values and the sample where the latter are replaced either by the mean or the median of the sample:
+
+```{r}
+col_clean <- subset(data,Mother.age>2)$Mother.age
+ks_mean <- dgof::ks.test(col_clean,replace(data$Mother.age,
+                                           data$Mother.age<2,
+                                           mean(col_clean)))
+ks_median <- dgof::ks.test(col_clean,replace(data$Mother.age,
+                                             data$Mother.age<2,
+                                             median(col_clean)))
+ks_median$statistic;ks_mean$statistic
+```
+
+We see that the lowest value of the Kolmogorov-Smirnov statistic is achieved by means of the median. In general, we could consider all the values taken by the `Mother.age` variable and see what is the one that minimizes the Kolmogorov-Smirnov statistic:
+
+```{r, fig.width=14, fig.height=10}
+values <- sort(unique(subset(data,Mother.age>2)$Mother.age))
+dists <- c()
+
+for (x in values) {
+    col_filled <- replace(data$Mother.age,data$Mother.age<2,x)
+    ks <- dgof::ks.test(col_clean,col_filled)
+    dists <- c(dists,ks$statistic)
+}
+
+values[match(min(dists),dists)]
+
+ggplot()+
+    geom_point(aes(x=values,
+                   y=dists),
+               colour = "black",
+               size = 3)+
+    geom_point(aes(x=mean(data$Mother.age),
+                   y=ks_mean$statistic),
+               colour = "lightcoral",
+               size = 3)+
+    scale_x_continuous(breaks=seq(10,50))+
+    labs(title = "Minimization of Kolmogorov-Smirnov distance",
+         x = "Mother's age",
+         y = "Kolmogorov-Smirnov distance")+
+    theme_minimal()+
+    theme(plot.title = element_text(size = 24, hjust = 0.5),
+          axis.text.x = element_text(size = 14),
+          axis.text.y = element_text(size = 14),
+          axis.title = element_text(size = 18))
+```
+
+We are led to choose the median even with this more general approach. Therefore, we choose to replace the abnormal values of `Mother.age` with the median, namely 28:
+
+```{r}
+data$Mother.age <- replace(data$Mother.age,data$Mother.age<2,median(col_clean))
+```
+
+Let us test if the average baby's weight and length are comparable with the averages of the population. Before doing it, let us see if the sex of the newborn is statistically significant as far as the weight and length are concerned. To this aim, we perform a **two-sample t-test**:
+
+```{r, fig.width=14, fig.height=10}
+my2cols <- c("pink","lightblue")
+p_weight <- ggplot(data, aes(x=Sex,y=Weight))+
+                geom_boxplot(aes(color = Sex),
+                             alpha=0.8,
+                             width = 0.5,
+                             outlier.shape=16,
+                             outlier.size=2,
+                             linewidth = 0.75,
+                             outlier.stroke = 0.75
+                             )+
+                scale_color_manual(values = my2cols)+
+                scale_y_continuous(breaks = seq(500,5500,500))+
+                labs(x="Sex",
+                     y="Weight (g)",
+                     title = "Baby's weight per sex")+
+                theme_minimal()+
+                theme(plot.title = element_text(size = 20, hjust = 0.5),
+                    axis.text.x = element_text(size = 10),
+                    axis.text.y = element_text(size = 10),
+                    axis.title = element_text(size = 16))
+
+p_length <- ggplot(data, aes(x=Sex,y=Length))+
+                geom_boxplot(aes(color = Sex),
+                             alpha=0.8,
+                             width = 0.5,
+                             outlier.shape=16,
+                             outlier.size=2,
+                             linewidth = 0.75,
+                             outlier.stroke = 0.75
+                             )+
+                scale_color_manual(values = my2cols)+
+                scale_y_continuous(breaks = seq(300,600,50))+
+                labs(x="Sex",
+                     y="Length (mm)",
+                     title = "Baby's length per sex")+
+                theme_minimal()+
+                theme(plot.title = element_text(size = 20, hjust = 0.5),
+                    axis.text.x = element_text(size = 10),
+                    axis.text.y = element_text(size = 10),
+                    axis.title = element_text(size = 16))
+
+ggarrange(p_weight,p_length,nrow = 1)
+```
+
+```{r}
+t_weight <-t.test(data = data,
+                  Weight ~ Sex,
+                  paired = F)
+t_length <-t.test(data = data,
+                  Length ~ Sex,
+                  paired = F)
+t_weight$p.value;t_length$p.value
+```
+
+In both cases, the p-value is very small, therefore we reject the null hypothesis, concluding that the difference between the 2 mean values is statistically significant.  
+
+According to [this site](https://www.babycenter.com/baby/baby-development/average-weight-and-growth-chart-for-babies-toddlers-and-beyo_10357633), in the United States, the average baby's weight at birth is 3.2 kg for girls and 3.4 kg for boys, while the average newborn is 49.5 cm long, with girls measuring 49.2 cm and boys measuring 49.9 cm.<br> Let us now see if the difference between the averages of the sample and those of the population are statistically significant, by performing 4 different t-tests:
+
+```{r}
+t_weight_F <- t.test(filter(data, Sex=="F")["Weight"],
+                     mu = 3200,
+                     conf.level = 0.95,
+                     alternative = "two.sided")
+
+t_weight_M <- t.test(filter(data, Sex=="M")["Weight"],
+                     mu = 3400,
+                     conf.level = 0.95,
+                     alternative = "two.sided")
+
+t_length_F <- t.test(filter(data, Sex=="F")["Length"],
+                     mu = 492,
+                     conf.level = 0.95,
+                     alternative = "two.sided")
+
+t_length_M <- t.test(filter(data, Sex=="M")["Length"],
+                     mu = 499,
+                     conf.level = 0.95,
+                     alternative = "two.sided")
+
+t_weight_F$p.value;t_weight_M$p.value;t_length_F$p.value;t_length_M$p.value
+```
+
+The values found on internet about the averages of the population are not the same for every site, and small changes in the average weight and length of girls lead to a much higher p-value. For example, if we consider an average of 3150 g and 491 mm for the girls' weight and length, respectively, we will find:
+
+```{r}
+t_weight_F_3150 <- t.test(filter(data, Sex=="F")["Weight"],
+                     mu = 3150,
+                     conf.level = 0.95,
+                     alternative = "two.sided")
+t_length_F <- t.test(filter(data, Sex=="F")["Length"],
+                     mu = 491,
+                     conf.level = 0.95,
+                     alternative = "two.sided")
+t_weight_F_3150$p.value;t_length_F$p.value
+```
+
+that are bigger than the significance level of 5%. Therefore, we conclude that the ignorance of the precise value of the average weight and length of the population do not allow to draw conclusions with any certainty. Nevertheless, we can say that the sample shows the same trend as the population, as far as the dependence of weight and length on sex is concerned.
+
+We can also study if the sex influences the number of gestation weeks and the diameter of cranium:
+
+```{r, fig.width=14, fig.height=10}
+my2cols <- c("pink","lightblue")
+p_weight <- ggplot(data, aes(x=Sex,y=Gestation.weeks))+
+                geom_boxplot(aes(color = Sex),
+                             alpha=0.8,
+                             width = 0.5,
+                             outlier.shape=16,
+                             outlier.size=2,
+                             linewidth = 0.75,
+                             outlier.stroke = 0.75
+                             )+
+                scale_color_manual(values = my2cols)+
+                scale_y_continuous(breaks = seq(25,45,5))+
+                labs(x="Sex",
+                     y="Number of weeks",
+                     title = "Gestation weeks per sex")+
+                theme_minimal()+
+                theme(plot.title = element_text(size = 20, hjust = 0.5),
+                    axis.text.x = element_text(size = 10),
+                    axis.text.y = element_text(size = 10),
+                    axis.title = element_text(size = 16))
+
+p_length <- ggplot(data, aes(x=Sex,y=Cranium))+
+                geom_boxplot(aes(color = Sex),
+                             alpha=0.8,
+                             width = 0.5,
+                             outlier.shape=16,
+                             outlier.size=2,
+                             linewidth = 0.75,
+                             outlier.stroke = 0.75
+                             )+
+                scale_color_manual(values = my2cols)+
+                scale_y_continuous(breaks=seq(230,410,20))+
+                labs(x="Sex",
+                     y="Diameter (mm)",
+                     title = "Diameter of cranium per sex")+
+                theme_minimal()+
+                theme(plot.title = element_text(size = 20, hjust = 0.5),
+                    axis.text.x = element_text(size = 10),
+                    axis.text.y = element_text(size = 10),
+                    axis.title = element_text(size = 16))
+
+ggarrange(p_weight,p_length,nrow = 1)
+```
+
+```{r}
+t.test(data = data,
+       Gestation.weeks ~ Sex,
+       paired = F)
+t.test(data = data,
+       Cranium ~ Sex,
+       paired = F)
+```
+
+Both p-values are very small, therefore we conclude that the difference between the mean values of the number of gestation weeks, computed for each sex, is statistically significant. The same holds for the diameter of the cranium.
+
+We can also study if there is some correlation between the birth type and the newborn's sex. In this respect, since both are categorical variables, let us look at the contingency table:
+
+```{r, fig.width=14, fig.height=10}
+contingency_birth_sex <- table(data$Birth.type,data$Sex)
+contingency_birth_sex
+ggballoonplot(data = as.data.frame(contingency_birth_sex),
+              fill = "value",
+              size.range = c(5,15))+
+    scale_fill_gradient()+
+    guides(size = F)+
+    labs(x="Birth type",
+         y="Sex",
+         title = "Sex vs birth type",
+         fill="Frequency")+
+    theme(plot.title = element_text(size = 26, hjust = 0.5),
+          axis.text.x = element_text(size = 18),
+          axis.text.y = element_text(size = 18),
+          axis.title = element_text(size = 20))
+```
+
+From the plot, we see that there is no correlation between the two variables. This is confirmed by the **Chi-Square test of independence**:
+
+```{r}
+chisq.test(contingency_birth_sex)
+```
+
+Indeed, since the p-value is higher than 0.05, we do not reject the null hypothesis of independence of the two categorical variables.
+
+The last analysis we are going to perform is that regarding the correlation between the birth type and the hospital. To this aim, we again build the contingency table and carry out the Chi-Square test of independece:
+
+```{r, fig.width=14, fig.height=10}
+contingency_birth_hospital <- table(data$Birth.type,data$Hospital)
+contingency_birth_hospital
+ggballoonplot(data = as.data.frame(contingency_birth_hospital),
+              fill = "value",
+              size.range = c(2,12))+
+    scale_fill_gradient()+
+    labs(x="Birth type",
+         y="Hospital",
+         title = "Hospital vs birth type",
+         fill = "Frequency")+
+    guides(size=F)+
+    theme(plot.title = element_text(size = 22, hjust = 0.5),
+          axis.text.x = element_text(size = 14),
+          axis.text.y = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          legend.title.align = 0.5)
+chisq.test(contingency_birth_hospital)
+```
+
+The p-value is about 0.58, therefore we do not reject the null hypothesis and conclude that the correlation between the two variables is not statistically significant.
+
+Before starting with the feature selection procedure, let us build a plot matrix, consisting of plots to properly visualize the correlation of each variable combination of the dataframe: 
+
+```{r, fig.width=14, fig.height=10}
+data <- data %>%
+    relocate(Weight,.before = Mother.age) %>%
+    relocate(Smoker,.before = Birth.type)
+
+panel.corr <- function(x, y){
+    
+    par(usr = c(0, 1, 0, 1))
+    
+    if (length(unique(x))<=3 & length(unique(y))<=3){
+        
+        contingency_table <- table(y,x)
+        test <- chisq.test(contingency_table)
+        p.value <- test$p.value
+        txt <- paste("Chi-Square","p-value:", signif(p.value,3), sep="\n")
+        text(0.5, 0.5, txt, cex = 2)
+    }    
+    else if (length(unique(x))==3 & length(unique(y))>3) {
+        
+        
+        test <- pairwise.t.test(y, 
+                    x,
+                    paired = F,
+                    pool.sd = T,
+                    p.adjust.method = "none")
+        osp_12 <- test$p.value[1,1]
+        osp_13 <- test$p.value[2,1]
+        osp_23 <- test$p.value[2,2]
+        txt <- paste("Pairwise\n",
+                     "p-values\n",
+                     "1-2:", signif(osp_12,3), "\n",
+                     "1-3:", signif(osp_13,3), "\n",
+                     "2-3:", signif(osp_23,3), sep="")
+        text(0.5, 0.5, txt, cex = 1.2)
+        
+    } 
+    else if (length(unique(x))==2 & length(unique(y))>3) {
+        
+        test <- t.test(y ~ x,
+           paired = F)
+        p.value <- test$p.value
+        txt <- paste("t-test",
+                     "p-value:",
+                     signif(p.value,3),
+                     sep="\n")
+        text(0.5, 0.5, txt, cex = 2)
+    } 
+    else{
+        
+        r <- round(cor(x, y), digits=3)
+        txt <- paste("Corr:", r, sep="\n")
+        text(0.5, 0.5, txt, cex = 2)
+        
+    }
+}
+
+panel.scat <- function(x, y){
+    if (length(unique(x))>3 & length(unique(y)) %in% c(2,3)){
+        par(new=T)
+        boxplot(x~y, 
+                horizontal = T,
+                xaxt="n",
+                yaxt="n", 
+                col = "lightcoral")
+    }
+    else if (length(unique(x))>3 & length(unique(y))>3) {
+        points(x,y, pch = 20, cex = 1, col = "lightcoral")
+    }
+    else{
+        if (length(unique(y))==3) {
+            par(new=T)
+            barplot(table(y,x)/max(table(y,x)),
+                    col=c("lightcoral","lightgreen","lightblue"),
+                    ylim=c(0,1.2),
+                    beside = T,
+                    axes=F,
+                    xaxt="n")
+        }
+        else{
+            par(new=T)
+            barplot(table(y,x)/max(table(y,x)),
+                    col=c("lightcoral","lightgreen"),
+                    ylim=c(0,1.2),
+                    beside = T,
+                    axes=F,
+                    xaxt="n")
+        }
+    }
+}
+
+big <- function(labels){
+    text(mean(x),mean(y),"ciao")
+}
+
+pairs(data,
+      upper.panel = panel.corr,
+      lower.panel = panel.scat,
+      cex.labels = 1.5,
+      labels = c("Weight", "Mother's\nage","Number of\npregnancies",
+                 "Weeks of\ngestation","Length","Cranium's\ndiameter",
+                 "Smoker","Type of\nbirth","Hospital","Sex"))
+```
+
+We choose to show:
+
+- the linear correlation coefficient when both variables are continuous;
+- the p-value of the two-sample t-test when one variable is continuous and the other is dichotomous;
+- the p-values of the pairwise t-test when one variable is continuous and the other is categorical with more than 2 levels;
+- the p-value of the Chi-Square test of independence when both variables are categorical.
+
+From the values in the first row, we find that the `Weight` variable is highly correlated with the variables `Gestation.weeks`, `Length` and `Cranium`. On the other hand, by looking at the p-values of the same row, it turns out that the newborn's weight is also highly influenced by the sex (as already seen previously), while it is not significantly dependent on the variables `Smoker`, `Birth.type` and `Hospital`.
+
+Since we would like to make a prediction on a newborn's weight, let us find a model that well describes how we can deduce it from the other variables. In this respect, let us start from the model containing all the variables:
+
+```{r}
+mod1 <- lm(Weight ~ .,data = data)
+summary(mod1)
+```
+
+The variable with the corresponding coefficient having the highest p-value is `Mother.age`, therefore we eliminate it from the model:    
+
+```{r}
+mod2 <- update(mod1,~.-Mother.age)
+summary(mod2)
+```
+
+The adjusted $R^2$ is basically the same as before, and this provides additional evidence that `Mother.age` can be dropped from the model. Let us proceed with the feature selection by removing the `Hospital` variable:
+
+```{r}
+mod3 <- update(mod2,~.-Hospital)
+summary(mod3)
+```
+
+Even in this case, the tiny decrease in the adjusted $R^2$ tells us that `Hospital` provides no real improvement in the model. At this point, let us also drop the `Smoker` variable and see what happens:
+
+```{r}
+mod4 <- update(mod3,~.-Smoker)
+summary(mod4)
+```
+
+In the same spirit as before, let us try to remove also the `Birth.type` variable and see how the adjusted $R^2$ changes:
+
+```{r}
+mod5 <- update(mod4,~.-Birth.type)
+summary(mod5)
+```
+
+The adjusted $R^2$ stays almost the same and all the coefficients remain statistically significant. Therefore, the variable selection leads us to identify `mod5` as a good candidate.<br> The same result would be obtained if we used the function `stepAIC` of the `MASS` package: 
+
+```{r, fig.width=14, fig.height=10}
+n <- nrow(data)
+stepwise.mod <- MASS::stepAIC(mod1,
+                direction = "both",
+                k=log(n))
+summary(stepwise.mod)
+```
+
+where `k=log(n)` gives the BIC, while `direction="both"` indicates that the feature selection technique is mixed, namely a combination of backward and forward selection.
+
+By looking at the scatterplots between the `Weight` variable and the variables `Gestation.weeks`, `Length` and `Cranium`, there seem to be non-linear effects. It is also clear from the slight U-shape in the plot at the top left of the following figure:
+
+```{r, fig.width=14, fig.height=10}
+par(mfrow=c(2,2))
+plot(mod5)
+```
+
+which depicts the residuals of `mod5` as a function of the fitted values. Therefore, we now try to add the corresponding quadratic terms and see if the new model provides a better fit: 
+
+```{r}
+mod6 <- update(mod5,~.+I(Gestation.weeks^2)+I(Length^2)+I(Cranium^2))
+summary(mod6)
+```
+
+```{r, fig.width=14, fig.height=10}
+par(mfrow=c(2,2))
+plot(mod6)
+```
+
+The addition of the terms quadratic in the predictors lead to a decrease in the values of the residuals, which now exhibit a more "horizontal" shape, if compared to those of `mod5`. However, unlike before, the `Cranium` variable seems not to be statically significant anymore. Before removing its main effect, let us first drop its non-linear effect and see what happens:     
+
+```{r}
+mod7 <- update(mod6,~.-I(Cranium^2))
+summary(mod7)
+```
+
+The `Cranium` variable has again become statistically significant, therefore we keep it. Furthermore, the adjusted $R^2$ has only very slightly decreased, thus we are led to prefer `mod7` to `mod6`. However, to decide the best model, let us look at the values of the BIC and the AIC of all the models we built:
+
+```{r}
+BIC(mod1,mod2,mod3,mod4,mod5,mod6,mod7)
+AIC(mod1,mod2,mod3,mod4,mod5,mod6,mod7)
+```
+
+According to the AIC, the best model is `mod6`, with `mod7` having a BIC very close to that of `mod6`, while the BIC would lead us to choose `mod7`. This happens because the BIC places a heavier penalty on models with many variables.<br> Since the difference between the AIC of `mod6` and `mod7` is tiny, if compared, for example, to the difference between `mod5` and `mod6`, we decide to choose `mod7` as the best model, preferring a simpler model rather than one with more parameters.
+
+Before going on, let us also assess the presence of **multicollinearity** by computing the variance inflation factors (VIF) of `mod7`:
+
+```{r}
+vif(mod7)
+```
+
+`Gestation.weeks` and `Length` have very high values of VIF. To address this problem, let us try to exclude one of the two variables, for example `Length`:
+
+```{r}
+mod8 <- update(mod7,~.-Length-I(Length^2))
+summary(mod8)
+```
+
+We have a significant decrease of the adjusted $R^2$, therefore, instead of removing the `Length` variable, we try to include an interaction term between `Length` and `Gestation.weeks`:
+
+```{r}
+mod9 <- update(mod7,~.+Length:Gestation.weeks)
+summary(mod9)
+```
+
+In this case, the adjusted $R^2$ is comparable to that of `mod7`.<br> Since the p-value associated to the quadratic term in `Gestation.weeks` is high, let us try to omit it:
+
+```{r}
+mod10 <- update(mod9, ~.-I(Gestation.weeks^2))
+summary(mod10)
+```
+
+The adjusted $R^2$ has stayed the same. In addition, both the AIC and BIC prefer `mod10` to `mod7`:
+
+```{r}
+AIC(mod7,mod8,mod9,mod10)
+BIC(mod7,mod8,mod9,mod10)
+```
+
+Furthermore, we have solved the problem of multicollinearity, since now the VIFs are the following:
+
+```{r}
+vif(mod10, type = "predictor")
+```
+
+Therefore, we consider `mod10` as the best model.<br> Let us analyse its residuals:
+
+```{r, fig.width=14, fig.height=10}
+par(mfrow=c(2,2))
+plot(mod10)
+```
+
+where the red lines are smooth fits, intended to make it easier to identify a trend. Let us check if their mean is compatible with zero:
+
+```{r}
+mean(residuals(mod10));sd(residuals(mod10))
+```
+
+Therefore, we can say that in our case the residuals have zero mean.<br> We now test the hypothesis of **homoscedasticity** by means of the **Breusch-Pagan test**:
+
+```{r}
+bptest(mod10)
+```
+
+The test leads us to reject the null hypothesis, thus we conclude that the residuals are heteroscedastic, meaning that they do not have a costant variance, as can be seen by the "Residuals vs Fitted" plot at the top left of the previous figure. 
+
+Let us now perform the **Durbin-Watson test** to verify the hypothesis of **independence** of the residuals:
+
+```{r}
+dwtest(mod10)
+```
+
+In this case, the p-value is greater than the significance level of 5%, therefore we do not reject the null hypothesis that the errors are uncorrelated. This is good, since the standard errors of the estimated regression coefficients, which are used to compute the t-statistic, are based on the assumption of uncorrelated error terms.
+
+Finally, let us study the presence of **outliers** and/or **high leverage points**: the former are points for which $y_i$ is far from the value predicted by the model, while observations with high leverage have an unusual value for $x_i$.<br> To quantify whether a point is problematic or not, we utilise the plot at bottom right of the previous figure. In particular, we see that the only value having a Cook's distance bigger than the critical value of 1 is the observation n. 1551:
+
+```{r, fig.width=14, fig.height=10}
+cook <- cooks.distance(mod10)
+ggplot()+
+    geom_point(aes(x=1:length(cook),
+                   y=cook,
+                   colour = cook>1),
+               size = 3)+
+    geom_hline(aes(yintercept=c(0.5,1)),
+               linetype=2,
+               colour = "darkred")+
+    geom_label(aes(x=2500,y=c(0.55,1.05),label=c(0.5,1)),
+              size=5,
+              fill="darkred",
+              colour = "white")+
+    scale_colour_manual(values = setNames(c("darkred","black"),c(T,F)))+
+    labs(title = "Analysis of residuals: Cook's distance",
+         x = "Index",
+         y = "Cook's distance")+
+    theme_minimal()+
+    theme(plot.title = element_text(size = 22, hjust = 0.5),
+          axis.text.x = element_text(size = 14),
+          axis.text.y = element_text(size = 14),
+          axis.title = element_text(size = 16),
+          legend.position = "none")
+```
+
+Therefore, having a very large Cook's distance, let us try to remove this value and perform again the multiple linear regression:
+
+```{r, fig.width=14, fig.height=10}
+index <- match(max(cook),cook)
+new_data <- data[-index,]
+mod11 <- lm(Weight ~ Pregnancies.number + Gestation.weeks*Length + Cranium + 
+                Sex + I(Length^2), data = new_data)
+summary(mod11)
+```
+
+The removal of the observation causes an increase in the adjusted $R^2$, but also a substantial increase in the p-value of the coefficient associated to `Gestation.weeks:Length`, namely the interaction term. For this reason, we try and look at the model without its term:  
+
+```{r}
+mod12 <- update(mod11,~.-Gestation.weeks:Length)
+summary(mod12)
+AIC(mod10,mod11,mod12)
+BIC(mod10,mod11,mod12)
+```
+
+Both AIC and BIC lead us to choose `mod12` as the best multiple linear regression model. Let us consider its residuals:
+
+```{r, fig.width=14, fig.height=10}
+par(mfrow=c(2,2))
+plot(mod12)
+```
+
+As before, we do not reject the hypothesis of uncorrelation of the residuals, as can be seen from the Durbin-Watson test:
+
+```{r}
+dwtest(mod12)
+```
+
+Let us now perform the Breusch-Pagan test: 
+
+```{r}
+bptest(mod10);bptest(mod12)
+```
+
+The p-value of the Breush-Pagan test is now significantly higher than before, so that we do not reject the hypothesis of homoscedasticity, if we set the significance level to 0.01. Therefore, we can conclude that `mod12` can be used to make a reliable prediction of a newborn's weight.
+
+Let us try to simplify the model in order to visualize the data, nevertheless keeping the essential ingredients. To this aim, we divide the data according to the newborn's sex. Then, we choose other two variables between the predictors of `mod12`, which are `Gestation.weeks`, `Pregnancies.number`, `Length` and `Cranium`. For example, let us consider the couple of variables given by `Gestation.weeks` and `Length`. Therefore, we obtain the following 3-dimensional scatterplot:
+
+```{r, fig.width=14, fig.height=10}
+colors <- c("pink","lightblue")
+colors <- colors[as.numeric(data$Sex)]
+s3d <- scatterplot3d(data$Weight~data$Gestation.weeks+data$Length, 
+                     color = colors,
+                     pch = 16,
+                     angle = 50,
+                     main = "3D Scatter plot",
+                     xlab = "Gestation weeks",
+                     ylab = "Length (mm)",
+                     zlab = "Baby's weight (g)",
+                     grid = T,
+                     box = F)
+legend("bottom", legend = levels(data$Sex),
+      col =  c("pink", "lightblue"), 
+      pch = 16,
+      inset = -0.25,
+      xpd = TRUE,
+      horiz = TRUE)
+F_data <- filter(data, Sex=="F")
+M_data <- filter(data, Sex=="M")
+my.lm_F <- lm(Weight ~ Gestation.weeks + Length, data = F_data)
+my.lm_M <- lm(Weight ~ Gestation.weeks + Length, data = M_data)
+summary(my.lm_F)
+summary(my.lm_M)
+s3d$plane3d(my.lm_F, lty.box = "solid", col = "pink", lwd = 1.5)
+s3d$plane3d(my.lm_M, lty.box = "solid", col = "lightblue", lwd = 1.5)
+```
+
+From the two regression planes we see that, if we keep fixed the number of weeks of gestation, the weight will increase more for a boy than for a girl.
+
+In conclusion, let us make a prediction for a newborn's weight. For example, let us consider a mother that:
+
+- has already gone through 2 pregnancies;
+- will deliver her baby during the 39th week.
+
+Let us also suppose that we do not have information about the length and the diameter of the cranium. In this case, we can use their mean values to give an estimate of these parameters. To be more precise, we consider the mean values related to the girls, since we saw before that the length and the diameter are significantly influenced by the sex of the newborn. Having said that, we obtain that the predicted value of her weight will be:
+
+```{r}
+predict(mod12, 
+        newdata = data.frame(Sex="F",Gestation.weeks=39,Pregnancies.number=2,
+                             Length=mean(data$Length[data$Sex=="F"]),
+                             Cranium=mean(data$Cranium[data$Sex=="F"])),
+        interval = "predict")
+```
+
+```{r}
+3166.765-2643.193;3690.337-3166.765
+```
+
+where `lwr` and `upr` represent the extreme values of the corresponding 95% prediction interval. Therefore, we predict the baby's weight to be:
+\[
+\begin{equation}
+m=3167\pm524\,\text{g}
+\end{equation}
+\]
+In other words, there is a 95% chance that the newborn's weight will be between $2643\,\text{g}$ and $3690\,\text{g}$.
+
