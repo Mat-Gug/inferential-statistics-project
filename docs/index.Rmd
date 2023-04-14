@@ -575,7 +575,7 @@ Therefore, we can say that in our case the residuals have zero mean.<br> We now 
 bptest(mod10)
 ```
 
-The test leads us to reject the null hypothesis, thus we conclude that the residuals are heteroscedastic, meaning that they do not have a costant variance.
+The test leads us to reject the null hypothesis, thus we conclude that the residuals are heteroscedastic, meaning that they do not have a constant variance.
 
 Let us now perform the **Durbin-Watson test** to verify the hypothesis of **independence** of the residuals:
 
