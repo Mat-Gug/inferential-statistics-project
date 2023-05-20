@@ -516,63 +516,31 @@ AIC(mod1,mod2,mod3,mod4,mod5,mod6,mod7)
 
 According to the AIC, the best model is `mod6`, with `mod7` having a BIC very close to that of `mod6`, while the BIC would lead us to choose `mod7`. This happens because the BIC places a heavier penalty on models with many variables.<br> Since the difference between the AIC of `mod6` and `mod7` is tiny, if compared, for example, to the difference between `mod5` and `mod6`, we decide to choose `mod7` as the best model, preferring a simpler model rather than one with more parameters.
 
-Before going on, let us also assess the presence of **multicollinearity** by computing the variance inflation factors (VIF) of `mod7`:
+Before going on, let us also assess the presence of **multicollinearity** by computing the variance inflation factors (VIFs) of `mod7`:
 
 ```{r}
-vif(mod7)
+vif(mod7, type="predictor")
 ```
 
-`Gestation.weeks` and `Length` have very high values of VIF. To address this problem, let us try to exclude one of the two variables, for example `Length`:
+Since all the VIFs are less than 5, no significant levels of multicollinearity are found.
 
-```{r}
-mod8 <- update(mod7,~.-Length-I(Length^2))
-summary(mod8)
-```
-
-We have a significant decrease of the adjusted $R^2$, therefore, instead of removing the `Length` variable, we try to include an interaction term between `Length` and `Gestation.weeks`:
-
-```{r}
-mod9 <- update(mod7,~.+Length:Gestation.weeks)
-summary(mod9)
-```
-
-In this case, the adjusted $R^2$ is comparable to that of `mod7`.<br> Since the p-value associated to the quadratic term in `Gestation.weeks` is high, let us try to omit it:
-
-```{r}
-mod10 <- update(mod9, ~.-I(Gestation.weeks^2))
-summary(mod10)
-```
-
-The adjusted $R^2$ has stayed the same. In addition, both the AIC and BIC prefer `mod10` to `mod7`:
-
-```{r}
-AIC(mod7,mod8,mod9,mod10)
-BIC(mod7,mod8,mod9,mod10)
-```
-
-Furthermore, we have solved the problem of multicollinearity, since now the VIFs are the following:
-
-```{r}
-vif(mod10, type = "predictor")
-```
-
-Therefore, we consider `mod10` as the best model.<br> Let us analyse its residuals:
+Let us analyse the residuals of `mod7`:
 
 ```{r, fig.width=14, fig.height=10}
 par(mfrow=c(2,2))
-plot(mod10)
+plot(mod7)
 ```
 
 where the red lines are smooth fits, intended to make it easier to identify a trend. Let us check if their mean is compatible with zero:
 
 ```{r}
-mean(residuals(mod10));sd(residuals(mod10))
+mean(residuals(mod7));sd(residuals(mod7))
 ```
 
 Therefore, we can say that in our case the residuals have zero mean.<br> We now test the hypothesis of **homoscedasticity** by means of the **Breusch-Pagan test**:
 
 ```{r}
-bptest(mod10)
+bptest(mod7)
 ```
 
 The test leads us to reject the null hypothesis, thus we conclude that the residuals are heteroscedastic, meaning that they do not have a constant variance.
@@ -580,7 +548,7 @@ The test leads us to reject the null hypothesis, thus we conclude that the resid
 Let us now perform the **Durbin-Watson test** to verify the hypothesis of **independence** of the residuals:
 
 ```{r}
-dwtest(mod10)
+dwtest(mod7)
 ```
 
 In this case, the p-value is greater than the significance level of 5%, therefore we do not reject the null hypothesis that the errors are uncorrelated. This is good, since the standard errors of the estimated regression coefficients, which are used to compute the t-statistic, are based on the assumption of uncorrelated error terms.
@@ -588,7 +556,7 @@ In this case, the p-value is greater than the significance level of 5%, therefor
 Finally, let us study the presence of **outliers** and/or **high leverage points**: the former are points for which $y_i$ is far from the value predicted by the model, while observations with high leverage have an unusual value for $x_i$.<br> To quantify whether a point is problematic or not, we utilise the plot at bottom right of the previous figure. In particular, we see that the only value having a Cook's distance bigger than the critical value of 1 is the observation n. 1551:
 
 ```{r, fig.width=14, fig.height=10}
-cook <- cooks.distance(mod10)
+cook <- cooks.distance(mod7)
 ggplot()+
     geom_point(aes(x=1:length(cook),
                    y=cook,
@@ -618,42 +586,42 @@ Therefore, having a very large Cook's distance, let us try to remove this value 
 ```{r, fig.width=14, fig.height=10}
 index <- match(max(cook),cook)
 new_data <- data[-index,]
-mod11 <- lm(Weight ~ Pregnancies.number + Gestation.weeks*Length + Cranium + 
-                Sex + I(Length^2), data = new_data)
-summary(mod11)
+mod8 <- lm(Weight ~ Pregnancies.number + Gestation.weeks + 
+               Length + Cranium + Sex + I(Gestation.weeks^2) + I(Length^2),
+           data = new_data)
+summary(mod8)
 ```
 
-The removal of the observation causes an increase in the adjusted $R^2$, but also a substantial increase in the p-value of the coefficient associated to `Gestation.weeks:Length`, namely the interaction term. For this reason, we try and look at the model without its term:  
+The removal of the observation causes an increase in the adjusted $R^2$, but also a substantial increase in the p-value of the coefficient associated to `I(Gestation.weeks^2)`, even though still statistically significant. Let us try to remove it: 
 
 ```{r}
-mod12 <- update(mod11,~.-Gestation.weeks:Length)
-summary(mod12)
-AIC(mod10,mod11,mod12)
-BIC(mod10,mod11,mod12)
+mod9 <- update(mod8,~.-I(Gestation.weeks^2))
+summary(mod9)
+BIC(mod7,mod8,mod9)
 ```
 
-Both AIC and BIC lead us to choose `mod12` as the best multiple linear regression model. Let us consider its residuals:
+Based on the value of BIC, we are led to choose `mod9` as the best multiple linear regression model. Let us consider its residuals:
 
 ```{r, fig.width=14, fig.height=10}
 par(mfrow=c(2,2))
-plot(mod12)
+plot(mod9)
 ```
 
 As before, we do not reject the hypothesis of uncorrelation of the residuals, as can be seen from the Durbin-Watson test:
 
 ```{r}
-dwtest(mod12)
+dwtest(mod9)
 ```
 
 Let us now perform the Breusch-Pagan test: 
 
 ```{r}
-bptest(mod10);bptest(mod12)
+bptest(mod7);bptest(mod9)
 ```
 
-The p-value of the Breush-Pagan test is now significantly higher than before, so that we do not reject the hypothesis of homoscedasticity, if we set the significance level to 0.01. Therefore, we can conclude that `mod12` can be used to make a reliable prediction of a newborn's weight.
+The p-value of the Breush-Pagan test is now significantly higher than before, so that we do not reject the hypothesis of homoscedasticity, if we set the significance level to 0.01. Therefore, we can conclude that `mod9` can be used to make a reliable prediction of a newborn's weight.
 
-Let us try to simplify the model in order to visualize the data, nevertheless keeping the essential ingredients. To this aim, we divide the data according to the newborn's sex. Then, we choose other two variables between the predictors of `mod12`, which are `Gestation.weeks`, `Pregnancies.number`, `Length` and `Cranium`. For example, let us consider the couple of variables given by `Gestation.weeks` and `Length`. Therefore, we obtain the following 3-dimensional scatterplot:
+Let us try to simplify the model in order to visualize the data, nevertheless keeping the essential ingredients. To this aim, we divide the data according to the newborn's sex. Then, we choose other two variables between the predictors of `mod9`, which are `Gestation.weeks`, `Pregnancies.number`, `Length` and `Cranium`. For example, let us consider the couple of variables given by `Gestation.weeks` and `Length`. Therefore, we obtain the following 3-dimensional scatterplot:
 
 ```{r, fig.width=14, fig.height=10}
 colors <- c("pink","lightblue")
@@ -694,7 +662,7 @@ In conclusion, let us make a prediction for a newborn's weight. For example, let
 Let us also suppose that we do not have information about the length and the diameter of the cranium. In this case, we can use their mean values to give an estimate of these parameters. To be more precise, we consider the mean values related to the girls, since we saw before that the length and the diameter are significantly influenced by the sex of the newborn. Having said that, we obtain that the predicted value of her weight will be:
 
 ```{r}
-predict(mod12, 
+predict(mod9, 
         newdata = data.frame(Sex="F",Gestation.weeks=39,Pregnancies.number=2,
                              Length=mean(data$Length[data$Sex=="F"]),
                              Cranium=mean(data$Cranium[data$Sex=="F"])),
